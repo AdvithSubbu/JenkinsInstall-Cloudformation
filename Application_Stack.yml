@@ -1,0 +1,146 @@
+AWSTemplateFormatVersion  :  '2010-09-09'
+Description               :  'This template creates the Application resources'
+Parameters                :
+  EnvironmentName:
+    Description           :   Environment where resources need to be launched
+    Type                  :   String
+    AllowedValues         :   [DEV,UA,PROD]
+    ConstraintDescription :   must be in DEV,UA,PROD
+    Default               :   DEV
+  JenkinsPort:
+    Description: The Port that will be used to access Jenkins (Must be port 1024 or above, unless changing jenkins user).
+    Type: Number
+    MinValue: 1024
+    MaxValue: 65535
+    Default: 8080
+  
+Mappings                  :
+  AWSRegionToAMI          :
+    us-east-1 :
+      HVM64   : ami-0ff8a91507f77f867
+    us-east-2:
+      HVM64   : ami-0b59bfac6be064b78
+    us-west-1 :
+      HVM64   : ami-0bdb828fd58c52235
+    us-west-2:
+      HVM64   : ami-a0cfeed8
+
+  EnvironmentToInstance    :
+    DEV       :
+      instanceType: t2.micro
+    UA        :
+      instanceType: t2.micro
+    PROD      :
+      instanceType: t2.small
+
+Resources                   :   
+  JenkinsServer:
+    Type: AWS::EC2::Instance 
+    DeletionPolicy: Retain
+    Metadata:
+      Comment: Install  Jenkins
+      AWS::CloudFormation::Init:        
+        config:
+          packages:
+            yum:
+              wget: []
+              # java-1.8.0-openjdk: []
+              # java-1.8.0-openjdk-devel: []
+              # git: []  
+              
+          commands:
+            # 01_epel_repo:
+            #   command: sudo rpm -ivh https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+            01_jenkins_update:
+              command: sudo yum -y update
+            02_jenkins_repo:
+              command: sudo yum install git -y #sudo wget -O /etc/yum.repos.d/jenkins.repo http://pkg.jenkins-ci.org/redhat/jenkins.repo
+            03_yum_clean:
+              command: sudo yum install java-1.8.0-openjdk -y  #sudo yum clean all
+            04_jenkins_key:
+              command: export JAVA_HOME="/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.181-8.b13.39.39.amzn1.x86_64":$JAVA_HOME # sudo rpm --import https://jenkins-ci.org/redhat/jenkins-ci.org.key
+            05_jenkins_dirs:
+              command: sudo wget -O /etc/yum.repos.d/jenkins.repo http://pkg.jenkins.io/redhat/jenkins.repo #sudo mkdir -p /home/jenkins /var/lib/jenkins/.ssh /var/cache/jenkins/war /var/log/jenkins
+            06_jenkins_install:
+              command: sudo rpm --import https://pkg.jenkins.io/redhat/jenkins.io.key #sudo yum install -y jenkins
+            07_check_jenkins_login:
+              command: sudo yum install jenkins -y #sudo usermod -s /bin/bash jenkins
+            07_check_jenkins_login1:
+              command:  sudo service jenkins start
+
+            # 08_set_jenkins_port:
+            #   command: !Sub |
+            #     sudo sed -i "s/JENKINS_PORT=\"8080\"/JENKINS_PORT=\"${JenkinsPort}\"/g" /etc/sysconfig/jenkins
+            # 09_sshconfig:
+            #   command: sudo echo -e "Host *\n\tStrictHostKeyChecking no\n" >> /var/lib/jenkins/.ssh/config
+            # 10_ssh_keygen:
+            #   command: sudo ssh-keygen -t rsa -b 2048 -C jenkins@jenkins -N "" -f /var/lib/jenkins/.ssh/id_rsa; sudo cat /var/lib/jenkins/.ssh/id_rsa.pub > /var/lib/jenkins/.ssh/authorized_keys
+            # 11_set_permissions:
+            #   command: sudo chown -R jenkins:jenkins /home/jenkins /var/lib/jenkins /var/cache/jenkins /var/log/jenkins; sudo chmod 0700 /var/lib/jenkins/.ssh; sudo chmod 0600 /var/lib/jenkins/.ssh/*
+           
+          files:
+            '/etc/cfn/cfn-hup.conf':
+              content: !Sub |
+                [main]
+                stack=${AWS::StackId}
+                region=${AWS::Region}
+                interval=1
+              mode: '000400'
+              owner: root
+              group: root
+            '/etc/cfn/hooks.d/cfn-auto-reloader.conf':
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.JenkinsServer.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init --verbose --stack=${AWS::StackName} --region=${AWS::Region} --resource=JenkinsServer
+                runas=root
+          services:
+            sysvinit:
+              jenkins:
+                enabled: true
+                ensureRunning: true 
+              cfn-hup:
+                enabled: true
+                ensureRunning: true
+                files:
+                  - '/etc/cfn/cfn-hup.conf'
+                  - '/etc/cfn/hooks.d/cfn-auto-reloader.conf'              
+    CreationPolicy:
+      ResourceSignal:
+        Count: '1'
+        Timeout: PT3M
+          
+    Properties:    
+      KeyName : myeast1keypair
+      SecurityGroupIds:
+      - Fn::ImportValue:
+            kiran-test-yml-sg
+
+      AvailabilityZone: 
+        !Select 
+            - 0
+            - Fn::GetAZs: !Ref 'AWS::Region'        
+      ImageId: 
+        !FindInMap [AWSRegionToAMI, !Ref 'AWS::Region', HVM64]       
+
+      InstanceType: 
+        !FindInMap [EnvironmentToInstance, !Ref 'EnvironmentName', instanceType]
+
+      SubnetId: 
+          Fn::ImportValue:
+            kiran-test-yml-SubnetID
+      UserData:
+        Fn::Base64: !Sub |     # No more Fn::Join needed
+          #!/bin/bash -xe
+          # Get the latest CloudFormation package
+          #yum update -y aws-cfn-bootstrap
+          # Start cfn-init          
+          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource JenkinsServer --region ${AWS::Region}
+           # Start up the cfn-hup daemon to listen for changes to the EC2 instance metadata
+          /opt/aws/bin/cfn-hup || error_exit 'Failed to start cfn-hup'
+          #All done so signal success          
+          /opt/aws/bin/cfn-signal -e $? --region ${AWS::Region} --stack ${AWS::StackName} --resource JenkinsServer   
+
+
+
