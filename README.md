@@ -10,6 +10,8 @@
   1. Network_Stack
  2. Application_Stack
 
+Step 1 -  execute Network_stack.yml
+
 Network stack accepts  a parameter VPCCIDR  which accepts the CIDR block as input.  
 VPC is created in the region the AWS CLI is configured to.
 
@@ -23,7 +25,13 @@ Output from this stack are
  2.  StackVPC  
  3. MyJenkinsSG
 
-    
-  
 
+Step 2 -  execute Application_stack.yml
+Application stack accepts 2 parameters.
 
+ 1. Environment Name
+ 2. Jenkins Port
+
+Note: For now this code is setup  to use AMI's from US regions.
+
+This stack utilizes cfn_init to install the jenkins setup.  once the setup is complete ,stack is completed sucessfully.
